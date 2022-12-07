@@ -12,6 +12,8 @@ endstruc
 
 ;*****************************
 
+MSG_DONTWAIT    equ 0x40
+MSG_WAITALL     equ 0x100
 
 section .data
 
@@ -33,9 +35,6 @@ section .data
     connection_f_msg: db "Connection Failed.", 0xA, 0x0
     connection_f_msg_l: equ $ - connection_f_msg
 
-    socket_closed_msg:   db "Socket closed.", 0xA, 0x0
-    socket_closed_msg_l: equ $ - socket_closed_msg
-
     fileCre_f_msg: db "Failed to Create file.", 0xA, 0x0
     fileCre_f_msg_l: equ $ - fileCre_f_msg
 
@@ -52,10 +51,23 @@ section .data
     filename: db "Data.txt",0x0
     filename_l: equ $ - filename
 
-    banner: db "Enter number between 100 and 4FF to retrieve data from server: ", 0x00
-    banner_l: equ $ - banner
+    number: db "100", 0xA ; command sent to server
+    number_l: equ $ - number
 
+    mesg1: db "-----BEGINNING OF RANDOM DATA-----", 0xA,0xA
+    mesg1_l: equ $ - mesg1
 
+    mesg2: db 0XA,0xA, "-----ENDING OF RANDOM DATA-----", 0xA,0xA
+    mesg2_l: equ $ - mesg2
+
+    mesg3: dq "-----BEGINNING OF MANIPULATED DATA USING QUICK SORT-----", 0xA
+    mesg3_l: equ $ -mesg3
+
+    mesg4: dq "-----ENDING OF MANIPULATED DATA USING QUICK SORT-----", 0xA
+    mesg3_l: equ $ -mesg4
+
+    space: db 0xA
+    space_l: equ $ - space
 
     sockaddr_in: 
         istruc sockaddr_in_type 
@@ -74,9 +86,7 @@ section .bss
     ; global variables
     file_fd                  resq 1             ; file opened file descriptor
     socket_fd:               resq 1             ; socket file descriptor
-    client_fd                resq 1             ; client file descriptor
-    message_buf              resb 1024          ; store data recieved from server
-    number                   resq 4             ; number sent to server
+    message_buf              resb 0x101          ; store data recieved from server
     message_buf_l            resq 4             ; length of message recieved from server
 
 
@@ -90,30 +100,41 @@ _start:
 
     call _network.connection    ; connecting to the server
 
-    push banner_l 
-    push banner
-    call _print         ; printing banner 
-
-    push 0x4
-    push number
-    call _read          ; taking input from the user for data to be retrieved from server
-
     call _network.send   ; sending message to the server
 
     call _network.recieve   ; recieving message from the server 
 
-    call _network.recieve
 
-    mov [message_buf_l], rax   ; storing number of bytes of data recieved from server to variabel
+
 
     call _file.create         ; opening a file name data.txt
 
-    push qword[message_buf_l]
+
+    push mesg1_l
+    push mesg1
+    call _file.write
+
+    call _file.append
+
+    
+
+    push 0x100
     push message_buf
     call _file.write        ; writing data recieved from the server to the file
 
+    call _file.append
 
-    call _network.close     ; closing the socket
+    push mesg2_l
+    push mesg2
+    call _file.write
+
+
+    call _file.append
+
+    push mesg3_l
+    push mesg3
+    call _file.write
+
     call _file.close        ; closing the file 
     jmp _exit
         
@@ -147,17 +168,20 @@ _network:
 
         jl _connection_failed               ; failed
         call _connection_success            ; successful
-        mov [client_fd], rax
         ret
 
     .send:      
-        ; sending message to server
+        ; sending message to server using sendto system call
 
-        mov rax, 0x1
-        mov rdi, qword [socket_fd]
+        mov rax, 0x2C
+        mov rdi,  [socket_fd]
         mov rsi, number
-        mov rdx, 0x4
+        mov rdx, number_l
+        mov r10, MSG_DONTWAIT
+        mov r8, sockaddr_in
+        mov r9, sockaddr_in_l
         syscall
+
 
         cmp rax, 0x0
         jl _message_sent_f
@@ -167,20 +191,17 @@ _network:
     .recieve:  
         ; recieving data from the server
 
-        mov rax, 0x0
-        mov rdi, qword [socket_fd]
+        mov rax, 0x2D
+        mov rdi, [socket_fd]
         mov rsi,  message_buf   
-        mov rdx,   1024
+        mov rdx,  0x100
+        mov r10, MSG_WAITALL
+        mov r8, 0x00
+        mov r9, 0x00
         syscall
         ret
 
-    .close:  ; closing the socket
-        
-        mov rax, 0x3
-        mov rdi, qword[client_fd]
-        syscall
-        call _socket_closed
-        ret
+
 
 
 _file:  
@@ -248,7 +269,34 @@ _file:
         pop rsi
         pop rdi
         pop rbp
-        ret 0x10   
+        ret 0x10  
+
+    .append:
+        ; using lseek() syscall to change file offset to append data
+
+        ; prologue
+        push rbp
+        mov rbp, rsp
+        push rdi
+        push rsi
+
+       
+        mov rax, 0x8
+        mov rdi, [file_fd]
+        mov rsi, 0x0                        ; data to write to file
+        mov rdx, 1                                         
+        syscall
+
+    ; [rbp + 0x10] -> buffer pointer
+
+
+        ; epilogue
+        pop rsi
+        pop rdi
+        pop rbp
+        ret 0x10                                ; clean up the stack upon return - not strictly following C Calling Convention
+
+
 
     .close:                                 ; close the file
 
@@ -366,13 +414,6 @@ _message_sent_f:
     call _print 
     ret
 
-
-_socket_closed:
-    ; print socket closed
-    push socket_closed_msg_l
-    push socket_closed_msg
-    call _print
-    ret
 
 
 
