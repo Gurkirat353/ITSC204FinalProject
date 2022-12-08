@@ -1,6 +1,5 @@
 
 
-
 ;*****************************
 struc sockaddr_in_type
 ; defined in man ip(7) because it's dependent on the type of address
@@ -12,8 +11,19 @@ endstruc
 
 ;*****************************
 
+NULL            equ 0x00
+MAP_SHARED      equ 0x01
+MAP_PRIVATE     equ 0x02
+MAP_FIXED       equ 0x10
+MAP_ANONYMOUS   equ 0x20
+PROT_NONE       equ 0x00
+PROT_READ       equ 0x01
+PROT_WRITE      equ 0x02
+PROT_EXEC       equ 0x04
 MSG_DONTWAIT    equ 0x40
 MSG_WAITALL     equ 0x100
+malloc_size     equ 0x400
+
 
 section .data
 
@@ -66,8 +76,6 @@ section .data
     mesg4: dq "-----ENDING OF MANIPULATED DATA USING QUICK SORT-----", 0xA
     mesg3_l: equ $ -mesg4
 
-    space: db 0xA
-    space_l: equ $ - space
 
     sockaddr_in: 
         istruc sockaddr_in_type 
@@ -88,7 +96,7 @@ section .bss
     socket_fd:               resq 1             ; socket file descriptor
     message_buf              resb 0x101          ; store data recieved from server
     message_buf_l            resq 4             ; length of message recieved from server
-
+    mem_map_ptr              resq 1             ; store memory pointer for allocated memory
 
 section .text
     global _start
@@ -135,6 +143,12 @@ _start:
     push mesg3
     call _file.write
 
+    call _malloc.allocate    ; allocating memory 
+
+    call _loop              ; storing data in array
+
+
+    call _malloc.free       ; free memory allocated 
     call _file.close        ; closing the file 
     jmp _exit
         
@@ -306,6 +320,53 @@ _file:
         ret
 
 
+_loop:
+
+    mov rcx, 0x0
+
+    .rep:
+
+    lea r8, [message_buf + rcx]
+
+    cmp rcx, 0x100
+    jg .end
+    mov rax, 4
+    mul rcx
+    mov rbx, rax
+    lea rax, [mem_map_ptr + rbx]
+    mov [rax], r8
+    inc rcx
+
+    jmp .rep
+
+
+    .end:
+        ret
+
+_malloc:
+
+    .allocate:
+    ; malloc (mmap syscall)
+    ; returns pointer to allocated memory on heap in rax
+    mov rax, 0x9
+    mov rdi, NULL       
+    mov rsi, malloc_size      
+    mov rdx, PROT_WRITE
+    mov r10, MAP_ANONYMOUS
+    or r10, MAP_PRIVATE
+    mov r8, 0x00
+    mov r9, 0x00
+    syscall
+    mov [mem_map_ptr], rax
+    ret
+
+    .free:
+    ; free (munmap syscall)
+    ; returns 0x00 in rax if succesful
+    mov rax, 0xb
+    mov rdi, [mem_map_ptr]
+    mov rsi, malloc_size
+    syscall
 
 
 
